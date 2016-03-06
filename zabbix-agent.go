@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/cavaliercoder/g2z"
+	"github.com/dataart-telco/g2z"
 	"errors"
 	"reflect"
 	"github.com/scalingdata/gcfg"
@@ -26,11 +26,6 @@ type Config struct {
 		MaxCalls int
 	}
 }
-
-/*type State struct {
-	LastState *RestcommCluster
-	Test2 RestcommCluster
-}*/
 
 type ZabbixAgent struct {
 	LastState *RestcommCluster
