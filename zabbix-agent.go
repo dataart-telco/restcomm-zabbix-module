@@ -2,27 +2,28 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/dataart-telco/g2z"
 	"errors"
-	"reflect"
+	"fmt"
+	"github.com/dataart-telco/g2z"
 	"github.com/scalingdata/gcfg"
 	"io"
 	"io/ioutil"
+	"net/http"
 	"os"
+	"reflect"
 )
 
 type Config struct {
-
 	Main struct {
 		MarathonHost string
-		AppId string
-		LogLevel string
+		AppId        string
+		LogLevel     string
 	}
 
 	Restcomm struct {
-		Port int
-		User string
-		Pswd string
+		Port     int
+		User     string
+		Pswd     string
 		MaxCalls int
 	}
 }
@@ -31,11 +32,34 @@ type ZabbixAgent struct {
 	LastState *RestcommCluster
 }
 
-func (self *ZabbixAgent) Write(data *RestcommCluster) {
-	self.toFile(data)
+type ZabbixAgentServer struct {
+	State     int
+	LastState RestcommCluster
 }
 
-func (self *ZabbixAgent) toFile(data *RestcommCluster) {
+func (self *ZabbixAgentServer) Write(data RestcommCluster) {
+	self.LastState = data
+	self.State = self.State + 1
+	Info.Printf("Write data: %d: %p -> %p -> %p; %p \n", self.State, self, &self.LastState, self.LastState.Nodes, monitor)
+}
+
+func (self *ZabbixAgentServer) Start() {
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Connection", "close")
+		w.Header().Set("Content-Type", "text/html")
+
+		bytes, _ := json.Marshal(self.LastState)
+		fmt.Fprintf(w, string(bytes))
+	})
+	go func() {
+		err := http.ListenAndServe(fmt.Sprintf(":%d", 9090), nil)
+		if err != nil {
+			panic(err)
+		}
+	}()
+}
+
+func (self *ZabbixAgentServer) toFile(data *RestcommCluster) {
 	bytes, _ := json.Marshal(data)
 	//Info.Printf("ZabbixAgent %p dump: %s", self, string(bytes))
 	err := ioutil.WriteFile("/tmp/last_data.json", bytes, 0777)
@@ -44,7 +68,7 @@ func (self *ZabbixAgent) toFile(data *RestcommCluster) {
 	}
 }
 
-func (self *ZabbixAgent) fromFile() {
+func (self *ZabbixAgentServer) fromFile() {
 	bytes, err := ioutil.ReadFile("/tmp/last_data.json")
 	if err != nil {
 		Error.Println("can not read data file", err)
@@ -57,18 +81,41 @@ func (self *ZabbixAgent) fromFile() {
 		Error.Println("can not decaode file", err)
 		return
 	}
-	self.LastState = &data
+	self.LastState = data
 }
 
-func (self *ZabbixAgent) GetNodes() ([]RestcommNode, error){
-	Info.Println("GetNodes:", self.LastState,)
+func (self *ZabbixAgent) RestoreState() error {
+	Info.Println("Restore: step#1")
+	resp, err := http.Get("http://127.0.0.1:9090")
+	if err != nil {
+		return err
+	}
+	Info.Println("Restore: step#2")
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	Info.Println("Restore: step#3")
+	var data RestcommCluster
+	err = json.Unmarshal(body, &data)
+	if err != nil {
+		return err
+	}
+	self.LastState = &data
+	Info.Println("Restore: step#4")
+	return nil
+}
+
+func (self *ZabbixAgent) GetNodes() ([]RestcommNode, error) {
+	Info.Println("GetNodes:", self.LastState)
 	if self.LastState == nil {
 		return nil, errors.New("no data")
 	}
 	return self.LastState.Nodes, nil
 }
 
-func (self *ZabbixAgent) GetMetrics(nodeId string) (*RestcommMetrics, error){
+func (self *ZabbixAgent) GetMetrics(nodeId string) (*RestcommMetrics, error) {
 	if self.LastState == nil {
 		return nil, errors.New("GetMetrics: no data")
 	}
@@ -82,7 +129,14 @@ func (self *ZabbixAgent) GetMetrics(nodeId string) (*RestcommMetrics, error){
 
 func (self *ZabbixAgent) Discovery(request *g2z.AgentRequest) (g2z.DiscoveryData, error) {
 	Info.Println("Discovery local")
-	self.fromFile();
+	err := self.RestoreState()
+	if err != nil {
+		Error.Println("Discovery error:", err)
+		return nil, errors.New("No data. Restore error")
+	}
+
+	Info.Printf("Read State: %p -> %p -> %p; \n", self, &self.LastState, self.LastState.Nodes)
+	//self.fromFile();
 	nodes, err := self.GetNodes()
 	if err != nil {
 		Error.Print("Discovery error:", err)
@@ -104,7 +158,9 @@ func (self *ZabbixAgent) Discovery(request *g2z.AgentRequest) (g2z.DiscoveryData
 
 func (self *ZabbixAgent) Metrics(request *g2z.AgentRequest) (uint64, error) {
 	Info.Println("Metrics:", request)
-	self.fromFile();
+	self.RestoreState()
+
+	//self.fromFile()
 	if len(request.Params) < 2 {
 		Error.Print("invalid params count")
 		return 0, errors.New("invalid params count: Expected 2 args")
@@ -133,16 +189,19 @@ var monitor *MonitorAgent
 func init() {
 
 	err := gcfg.ReadFileInto(cfg, "zabbix-agent.ini")
+	zabbixAgentServer := &ZabbixAgentServer{}
+	zabbixAgentServer.Start()
+
 	if err != nil {
 		Error.Println("can not read ini file", err)
 		Info.Println("Use default settings")
 		monitor = &MonitorAgent{marathonHost: "127.0.0.1:8080", appId: "restcomm",
 			restcommPort: 8080, restcommUser: "ACae6e420f425248d6a26948c17a9e2acf", restcommPswd: "42d8aa7cde9c78c4757862d84620c335", restcommMaxCalls: 50,
-			Writer: zabbixAgent}
+			Writer: zabbixAgentServer}
 	} else {
 		monitor = &MonitorAgent{marathonHost: cfg.Main.MarathonHost, appId: cfg.Main.AppId,
 			restcommPort: cfg.Restcomm.Port, restcommUser: cfg.Restcomm.User, restcommPswd: cfg.Restcomm.Pswd, restcommMaxCalls: cfg.Restcomm.MaxCalls,
-			Writer: zabbixAgent}
+			Writer: zabbixAgentServer}
 
 		var traceHandle io.Writer
 		if cfg.Main.LogLevel == "TRACE" {
@@ -156,7 +215,7 @@ func init() {
 	g2z.RegisterDiscoveryItem("restcomm.discovery", "Restcomm Instances", zabbixAgent.Discovery)
 	g2z.RegisterUint64Item("restcomm.metrics", "Restcomm Metrics", zabbixAgent.Metrics)
 	g2z.RegisterUninitHandler(func() error {
-		monitor.StopWorker();
+		monitor.StopWorker()
 		return nil
 	})
 }
