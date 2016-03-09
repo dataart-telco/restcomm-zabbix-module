@@ -39,18 +39,19 @@ type AgentWriter interface {
 
 type MonitorAgent struct {
 	marathonHost string
-	appId string
+	appId        string
 
-	restcommUser string
-	restcommPswd string
-	restcommPort int
+	restcommUser     string
+	restcommPswd     string
+	restcommPort     int
 	restcommMaxCalls int
 
-	stopWorker chan int
-	Writer AgentWriter
+	collectorInterval int
+	stopWorker        chan int
+	Writer            AgentWriter
 }
 
-func (self *MonitorAgent) GetClusterNodes() (*MesosResponse, error){
+func (self *MonitorAgent) GetClusterNodes() (*MesosResponse, error) {
 	_, body, err := Get("http://" + self.marathonHost + "/v2/apps/" + self.appId + "/tasks")
 	if err != nil {
 		return nil, err
@@ -65,8 +66,8 @@ func (self *MonitorAgent) GetClusterNodes() (*MesosResponse, error){
 	return &respData, nil
 }
 
-func (self *MonitorAgent) CollectClusterMetrics(tasks *MesosResponse) (*RestcommCluster, error){
-	tasksCount := len(tasks.Tasks);
+func (self *MonitorAgent) CollectClusterMetrics(tasks *MesosResponse) (*RestcommCluster, error) {
+	tasksCount := len(tasks.Tasks)
 	Trace.Println("CollectClusterMetrics: tasksCount:", tasksCount)
 	nodes := make([]RestcommNode, 0, tasksCount)
 	for _, e := range tasks.Tasks {
@@ -101,7 +102,7 @@ func (self *MonitorAgent) GetRestCommCallStat(host string) (*RestcommNode, error
 	return &restcommData, nil
 }
 
-func (self *MonitorAgent) CollectMetrics(){
+func (self *MonitorAgent) CollectMetrics() {
 	Trace.Println("CollectMetrics")
 	tasks, err := self.GetClusterNodes()
 	if err != nil {
@@ -116,15 +117,16 @@ func (self *MonitorAgent) CollectMetrics(){
 	self.Writer.Write(clusterInfo)
 }
 
-func (self *MonitorAgent) StartWorker(period int){
-	Info.Println("StartWorker")
+func (self *MonitorAgent) StartWorker() {
+	Info.Println("StartWorker:", self.collectorInterval)
 	do := func() {
 		self.CollectMetrics()
 	}
-	self.stopWorker = schedule(period, do)
+	self.stopWorker = schedule(self.collectorInterval, do)
+	go do()
 }
 
-func (self *MonitorAgent) StopWorker(){
+func (self *MonitorAgent) StopWorker() {
 	Info.Println("StopWorker")
 	if self.stopWorker == nil {
 		return
