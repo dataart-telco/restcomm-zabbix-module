@@ -155,6 +155,16 @@ func (self *ZabbixAgent) ClusterMetrics(request *g2z.AgentRequest) (float64, err
 	return sum / count, nil
 }
 
+func (self *ZabbixAgent) ClusterSize(request *g2z.AgentRequest) (uint64, error) {
+	Trace.Println("ClusterSize")
+	self.fromFile()
+	state := self.LastState
+	if state == nil || state.Nodes == nil {
+		return uint64(0), nil
+	}
+	return uint64(len(state.Nodes)), nil
+}
+
 var zabbixAgent = &ZabbixAgent{}
 var cfg = &Config{}
 var monitor *MonitorAgent
@@ -187,6 +197,7 @@ func init() {
 	g2z.RegisterDiscoveryItem("restcomm.discovery", "Restcomm Instances", zabbixAgent.Discovery)
 	g2z.RegisterUint64Item("restcomm.metrics", "Instance Metrics", zabbixAgent.Metrics)
 	g2z.RegisterDoubleItem("restcomm.cluster.metrics", "Cluster Metrics", zabbixAgent.ClusterMetrics)
+	g2z.RegisterUint64Item("restcomm.cluster.size", "Cluster size", zabbixAgent.ClusterSize)
 
 	g2z.RegisterUninitHandler(func() error {
 		monitor.StopWorker()
