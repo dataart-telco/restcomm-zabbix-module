@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/dataart-telco/g2z"
+	. "github.com/dataart-telco/monitoring/restcomm"
+	. "github.com/dataart-telco/monitoring/log"
 	"github.com/scalingdata/gcfg"
 	"io"
 	"io/ioutil"
@@ -31,7 +33,7 @@ type ZabbixAgent struct {
 	LastState *RestcommCluster
 }
 
-func (self *ZabbixAgent) Write(data *RestcommCluster) {
+func (self *ZabbixAgent) DataCollected(data *RestcommCluster) {
 	self.toFile(data)
 }
 
@@ -98,7 +100,7 @@ func (self *ZabbixAgent) Discovery(request *g2z.AgentRequest) (g2z.DiscoveryData
 	return discovery, nil
 }
 
-func (self *RestcommMetrics) getUintVal(fieldName string) (val uint64, err error) {
+func getUintVal(self *RestcommMetrics, fieldName string) (val uint64, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			Error.Print("Catch exception", r)
@@ -127,7 +129,7 @@ func (self *ZabbixAgent) Metrics(request *g2z.AgentRequest) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return node.getUintVal(fieldName)
+	return getUintVal(node, fieldName)
 }
 
 func (self *ZabbixAgent) ClusterMetrics(request *g2z.AgentRequest) (float64, error) {
@@ -146,7 +148,7 @@ func (self *ZabbixAgent) ClusterMetrics(request *g2z.AgentRequest) (float64, err
 	sum := 0.0
 	count := float64(len(self.LastState.Nodes))
 	for _, node := range self.LastState.Nodes {
-		val, err := node.Metrics.getUintVal(fieldName)
+		val, err := getUintVal(&node.Metrics, fieldName)
 		if err != nil {
 			return 0, errors.New("Get Cluster Metrics: no field - " + fieldName)
 		}
@@ -174,15 +176,22 @@ func init() {
 	if err != nil {
 		Error.Println("can not read ini file", err)
 		Info.Println("Use default settings")
-		monitor = &MonitorAgent{marathonHost: "127.0.0.1:8080", appId: "restcomm",
-			restcommPort: 8080, restcommUser: "ACae6e420f425248d6a26948c17a9e2acf", restcommPswd: "42d8aa7cde9c78c4757862d84620c335", restcommMaxCalls: 50,
-			collectorInterval: 10,
-			Writer:            zabbixAgent}
+		monitor = &MonitorAgent{MarathonHost: "127.0.0.1:8080", AppId: "restcomm",
+			CollectorInterval: 10,
+			Callback: zabbixAgent}
+
+		monitor.Restcomm.Port = 8080
+		monitor.Restcomm.User = "ACae6e420f425248d6a26948c17a9e2acf"
+		monitor.Restcomm.Pswd = "42d8aa7cde9c78c4757862d84620c335"
+		monitor.Restcomm.MaxCalls = 50
 	} else {
-		monitor = &MonitorAgent{marathonHost: cfg.Main.MarathonHost, appId: cfg.Main.AppId,
-			restcommPort: cfg.Restcomm.Port, restcommUser: cfg.Restcomm.User, restcommPswd: cfg.Restcomm.Pswd, restcommMaxCalls: cfg.Restcomm.MaxCalls,
-			collectorInterval: cfg.Main.CollectorInterval,
-			Writer:            zabbixAgent}
+		monitor = &MonitorAgent{MarathonHost: cfg.Main.MarathonHost, AppId: cfg.Main.AppId,
+			CollectorInterval: cfg.Main.CollectorInterval,
+			Callback: zabbixAgent}
+		monitor.Restcomm.Port = cfg.Restcomm.Port
+		monitor.Restcomm.User = cfg.Restcomm.User
+		monitor.Restcomm.Pswd = cfg.Restcomm.Pswd
+		monitor.Restcomm.MaxCalls = cfg.Restcomm.MaxCalls
 
 		var traceHandle io.Writer
 		if cfg.Main.LogLevel == "TRACE" {
@@ -203,4 +212,8 @@ func init() {
 		monitor.StopWorker()
 		return nil
 	})
+}
+
+func main(){
+	
 }
